@@ -1,0 +1,248 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Intel Style GPX Marker Tool</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+html,body{height:100%;margin:0;background:#07140d;color:#d8ffe0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+#app{height:100%;display:grid;grid-template-columns:330px 1fr 360px}
+.panel{background:rgba(4,18,10,.94);border-right:1px solid #1e5b35;padding:12px;overflow:auto}
+.panel.r{border-right:0;border-left:1px solid #1e5b35}
+#map{height:100%;width:100%;background:#111}
+h1{font-size:16px;margin:0 0 10px;color:#7dff9a;letter-spacing:.08em}
+.box{border:1px solid #245d39;border-radius:10px;background:rgba(8,30,17,.88);padding:10px;margin-bottom:10px}
+label{display:block;font-size:13px;color:#a7d7b2;margin-top:8px}
+input,select,button,textarea{width:100%;box-sizing:border-box;margin-top:5px;padding:9px;border-radius:7px;border:1px solid #2e6b43;background:#0d1e13;color:#e9fff0}
+button{background:#136b32;border-color:#2ea44f;font-weight:700;cursor:pointer}
+button.secondary{background:#17291d;border-color:#375b42}
+button.danger{background:#5b1616;border-color:#9a2d2d}
+textarea{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px}
+.status{font-size:12px;line-height:1.45;background:#07140d;border:1px solid #2e6b43;border-radius:8px;padding:8px;margin-top:8px;color:#c7ffd4}
+.warn{background:#2b1808;border-color:#a86b19;color:#ffd89a}
+.bad{background:#2a0b0b;border-color:#9a2d2d;color:#ffb4b4}
+.marker-dot{width:24px;height:24px;border-radius:50%;background:#0d7d38;color:#fff;border:2px solid #baffc7;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:800;box-shadow:0 0 10px #000}
+.leaflet-control-layers,.leaflet-control-zoom{filter:invert(.85) hue-rotate(75deg)}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.small{font-size:12px;color:#9bcda6}
+</style>
+</head>
+<body>
+<div id="app">
+  <aside class="panel">
+    <h1>INGRESS STYLE GPX TOOL</h1>
+
+    <div id="protocolWarn" class="box bad" style="display:none">
+      偵測到你可能用本機檔案模式開啟。若網址是 edge://external-file 或 file://，iPad/Edge 可能會阻擋外部地圖。請將本檔放到 HTTPS/HTTP 網址後開啟。
+    </div>
+
+    <div class="box">
+      <label>指定中心座標</label>
+      <input id="centerInput" value="37.196446,36.577787" placeholder="lat,lng">
+      <div class="row">
+        <button id="goBtn">前往座標</button>
+        <button id="addCenterBtn" class="secondary">中心加點</button>
+      </div>
+      <label>縮放層級</label>
+      <select id="zoomSel">
+        <option>14</option><option>15</option><option>16</option><option selected>17</option><option>18</option><option>19</option>
+      </select>
+      <button id="setZoomBtn" class="secondary">套用縮放</button>
+    </div>
+
+    <div class="box">
+      <label>標點模式</label>
+      <select id="clickMode">
+        <option value="add">點擊地圖新增點</option>
+        <option value="pan">點擊不新增，只瀏覽</option>
+      </select>
+      <div class="row">
+        <button id="undoBtn" class="secondary">復原</button>
+        <button id="clearBtn" class="danger">清除</button>
+      </div>
+      <button id="reverseBtn" class="secondary">反轉順序</button>
+      <div id="status" class="status">點位 0</div>
+    </div>
+
+    <div class="box">
+      <label>手動輸入座標加點</label>
+      <input id="manualCoord" placeholder="lat,lng">
+      <button id="manualAddBtn" class="secondary">新增座標點</button>
+    </div>
+
+    <div class="box">
+      <label>GPX 類型</label>
+      <select id="gpxType">
+        <option value="wpt">Waypoint</option>
+        <option value="rte">Route</option>
+        <option value="trk">Track</option>
+        <option value="both">Waypoint + Route</option>
+      </select>
+      <label>檔名</label>
+      <input id="fileName" value="intel_style_points">
+      <label>點位前綴</label>
+      <input id="prefix" value="P">
+    </div>
+  </aside>
+
+  <main id="map"></main>
+
+  <aside class="panel r">
+    <div class="box">
+      <label>GPS 座標清單</label>
+      <button id="copyCoordsBtn" class="secondary">複製座標</button>
+      <textarea id="coordsOut" rows="12"></textarea>
+    </div>
+
+    <div class="box">
+      <label>GPX 輸出</label>
+      <button id="makeGpxBtn">生成 GPX</button>
+      <div class="row">
+        <button id="copyGpxBtn" class="secondary">複製 GPX</button>
+        <button id="downloadGpxBtn" class="secondary">下載 GPX</button>
+      </div>
+      <textarea id="gpxOut" rows="18"></textarea>
+      <div id="gpxStatus" class="status">尚未生成 GPX</div>
+    </div>
+
+    <div class="box">
+      <div class="small">
+        使用方式：輸入座標 → 前往座標 → 在地圖上點擊新增點 → 生成 GPX。<br>
+        重要：此工具需以 http/https 開啟，不能使用 edge://external-file。
+      </div>
+    </div>
+  </aside>
+</div>
+
+<script>
+const $=id=>document.getElementById(id);
+const isLocal = location.protocol === 'file:' || location.href.startsWith('edge://') || location.href.includes('external-file');
+if(isLocal) $('protocolWarn').style.display='block';
+
+let points=[], markers=[], line=null;
+
+function parseCoord(s){
+  const a=s.split(',').map(v=>Number(v.trim()));
+  if(a.length!==2 || a.some(v=>!Number.isFinite(v))) throw new Error('座標格式需為 lat,lng');
+  return L.latLng(a[0],a[1]);
+}
+function f(n){return Number(n).toFixed(6)}
+function esc(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&apos;'}[c]))}
+
+const init = parseCoord($('centerInput').value);
+const map = L.map('map',{zoomControl:true}).setView(init,17);
+
+const layers = {
+  'OSM Standard': L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:20,attribution:'© OpenStreetMap contributors'}),
+  'Carto Light': L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png',{maxZoom:20,attribution:'© OpenStreetMap © CARTO'}),
+  'Carto Dark': L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png',{maxZoom:20,attribution:'© OpenStreetMap © CARTO'}),
+  'OpenTopoMap': L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png',{maxZoom:17,attribution:'© OpenStreetMap © OpenTopoMap'})
+};
+layers['OSM Standard'].addTo(map);
+L.control.layers(layers,null,{collapsed:false,position:'topright'}).addTo(map);
+
+function markerIcon(i){
+  return L.divIcon({
+    className:'',
+    html:`<div class="marker-dot">${i}</div>`,
+    iconSize:[24,24],
+    iconAnchor:[12,12]
+  });
+}
+function refresh(){
+  markers.forEach(m=>m.remove());
+  markers=[];
+  if(line) line.remove();
+  points.forEach((p,i)=>{
+    const m=L.marker(p,{icon:markerIcon(i+1),draggable:true}).addTo(map);
+    m.on('dragend',e=>{
+      points[i]=e.target.getLatLng();
+      refresh();
+    });
+    m.on('contextmenu',()=>{
+      points.splice(i,1);
+      refresh();
+    });
+    markers.push(m);
+  });
+  if(points.length>1) line=L.polyline(points,{color:'#00ff66',weight:3,opacity:.8}).addTo(map);
+  $('status').textContent=`點位 ${points.length}`;
+  $('coordsOut').value=points.map(p=>`${f(p.lat)},${f(p.lng)}`).join('\n');
+}
+function addPoint(ll){
+  points.push(L.latLng(ll.lat,ll.lng));
+  refresh();
+}
+map.on('click',e=>{
+  if($('clickMode').value==='add') addPoint(e.latlng);
+});
+
+$('goBtn').onclick=()=>{
+  try{
+    const ll=parseCoord($('centerInput').value);
+    map.setView(ll,Number($('zoomSel').value));
+  }catch(e){alert(e.message)}
+};
+$('setZoomBtn').onclick=()=>map.setZoom(Number($('zoomSel').value));
+$('addCenterBtn').onclick=()=>addPoint(map.getCenter());
+$('manualAddBtn').onclick=()=>{
+  try{
+    addPoint(parseCoord($('manualCoord').value));
+    $('manualCoord').value='';
+  }catch(e){alert(e.message)}
+};
+$('undoBtn').onclick=()=>{points.pop();refresh()};
+$('clearBtn').onclick=()=>{
+  if(confirm('確定清除所有點位？')){
+    points=[];refresh();$('gpxOut').value='';$('gpxStatus').textContent='尚未生成 GPX';
+  }
+};
+$('reverseBtn').onclick=()=>{points.reverse();refresh()};
+$('copyCoordsBtn').onclick=()=>navigator.clipboard.writeText($('coordsOut').value);
+
+function makeGpx(){
+  const name=esc($('fileName').value||'points');
+  const prefix=esc($('prefix').value||'P');
+  const type=$('gpxType').value;
+  const now=new Date().toISOString();
+  let s=`<?xml version="1.0" encoding="UTF-8"?>\n`;
+  s+=`<gpx version="1.1" creator="Intel Style GPX Marker Tool" xmlns="http://www.topografix.com/GPX/1/1">\n`;
+  s+=`<metadata><name>${name}</name><time>${now}</time></metadata>\n`;
+  if(type==='wpt'||type==='both'){
+    points.forEach((p,i)=>s+=`<wpt lat="${f(p.lat)}" lon="${f(p.lng)}"><name>${prefix}${i+1}</name></wpt>\n`);
+  }
+  if(type==='rte'||type==='both'){
+    s+=`<rte><name>${name}</name>\n`;
+    points.forEach((p,i)=>s+=`<rtept lat="${f(p.lat)}" lon="${f(p.lng)}"><name>${prefix}${i+1}</name></rtept>\n`);
+    s+=`</rte>\n`;
+  }
+  if(type==='trk'){
+    s+=`<trk><name>${name}</name><trkseg>\n`;
+    points.forEach(p=>s+=`<trkpt lat="${f(p.lat)}" lon="${f(p.lng)}"></trkpt>\n`);
+    s+=`</trkseg></trk>\n`;
+  }
+  s+=`</gpx>\n`;
+  return s;
+}
+$('makeGpxBtn').onclick=()=>{
+  if(!points.length){alert('請先新增點位');return}
+  $('gpxOut').value=makeGpx();
+  $('gpxStatus').textContent=`已生成 ${points.length} 個點`;
+};
+$('copyGpxBtn').onclick=()=>navigator.clipboard.writeText($('gpxOut').value);
+$('downloadGpxBtn').onclick=()=>{
+  if(!points.length){alert('請先新增點位');return}
+  const text=$('gpxOut').value || makeGpx();
+  const name=($('fileName').value||'points').replace(/[\\/:*?"<>|]/g,'_')+'.gpx';
+  const blob=new Blob([text],{type:'application/gpx+xml;charset=utf-8'});
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);
+  a.download=name;
+  a.click();
+};
+refresh();
+</script>
+</body>
+</html>
